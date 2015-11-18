@@ -44,6 +44,7 @@ __global__ void compute_cell(int** cells_array, int dim)
 			}
 		}
 	}
+	// work out tile bounds for cell_tile[0] and cell_tile[TILE_LENGTH]
 	__syncthreads();
 	
 	
