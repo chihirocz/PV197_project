@@ -9,13 +9,24 @@ void solveGPU(int **dCells, int dim, int iters)
 	dim3 threadsPerBlock(TILE_LENGTH, 1, 1);
 	dim3 numBlocks(dim/threadsPerBlock.x, dim/threadsPerBlock.y, dim/threadsPerBlock.z);
 	
-	int* tmp_array = (int*) cudaMalloc(dim*dim*dim*sizeof(int));
+	int* result_array = (int*) cudaMalloc(dim*dim*dim*sizeof(int));
+    int* tmp, array_in, aray_out;
+
+    array_in = *dCells;
+    array_out = result_array;
 	
 	for (int i = 0; i < iters; i++)
 	{
-		compute_cell<<numBlocks, threadPerBlock)>>(*dCells, tmp_array, dim);
+		compute_cell<<numBlocks, threadPerBlock)>>(array_in, array_out, dim);
+        tmp = array_in;
+        array_in = array_out;
+        array_out = tmp;
 	}
+
+    *dCells = array_in; // result array from loop above
+    cudaFree(result_array);
 }
+
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim)
 {
