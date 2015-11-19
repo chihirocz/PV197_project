@@ -38,35 +38,66 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	int by = blockIdx.y;
 	int bz = blockIdx.z;
 	int tx = threadIdx.x;
+
+    int idx_x = blockIdx.x*blockDim.x + threadIdx.x;
+    int idx_y = blockIdx.y*blockDim.y + threadIdx.y;
+    int idx_z = blockIdx.z*blockDim.z + threadIdx.z;
 	
 	// It is guaranteed that dimension in one line is multiple of 128. There are no residues.
 	ushort blocks_in_line = dim/TILE_LENGTH;
 	int dim2 = dim*dim;
 	
-	for (int i = -1; i < 1; i++)
-	{
-		int idx_y = by + i;
-		if ((idx_y < 0) || (idx_y >=dim))
-		{
-			cell_tile[tx+1][i+1][j+1] = 0;
-		}
-		else
-		{
-			for (int j = -1; j < 1; j++)
-			{
-				int idx_z = bz + j;
-				if ((idx_z < 0) || (idx_z >= dim))
-				{
-					// work out the other bounds
-					cell_tile[tx+1][i+1][j+1] = 0;
-				}
-				else
-				{
-					cell_tile[tx+1][i+1][j+1] = in_array[(tx+bx*blockDim.x+by*dim+bz*dim2];
-				}
-			}
-		}
-	}
+	//for (int i = -1; i < 1; i++)
+	//{
+		//if ((idx_y < 0) || (idx_y >=dim))
+		//{
+			//cell_tile[tx+1][i+1][j+1] = 0;
+		//}
+		//else
+		//{
+			//for (int j = -1; j < 1; j++)
+			//{
+				//if ((idx_z < 0) || (idx_z >= dim))
+				//{
+					//// work out the other bounds
+					//cell_tile[tx+1][i+1][j+1] = 0;
+				//}
+				//else
+				//{
+					//cell_tile[tx+1][i+1][j+1] = in_array[(tx+bx*blockDim.x+by*dim+bz*dim2];
+				//}
+			//}
+		//}
+	//}
+
+    for (int i = -1; i < 2; i++)
+    {
+        for (int j = -1; j < 2; j++)
+        {
+            for (int k = -1; k < 2; k++)
+            {
+                short min = idx_x+i;
+                min = min(min, idx_y+j);
+                min = min(min, idx_z+k);
+
+                short max = idx_x+i;
+                max = max(max, idx_y+j);
+                max = max(max, idx_z+k);
+
+                if ((min < 0) || (max >= dim))
+                {
+                    cell_tile[tx+1+i][j+1][k+1] = 0;
+                }
+                else
+                {
+                    // above all this is quite stupid, because a value is stored multiple times into shared
+                    // but loading "caps" of the block is guaranteed
+                
+                    cell_tile[tx+1+i][j+1][k+1] = in_array[tx+i+bx*blockDim.x+(by+j)*dim+(bz+k)*dim2];
+                }
+            }
+        }
+    }
 	// work out tile bounds for cell_tile[0] and cell_tile[TILE_LENGTH]
 	__syncthreads();
 	
