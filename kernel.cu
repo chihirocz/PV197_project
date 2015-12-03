@@ -47,7 +47,8 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	
 	// It is guaranteed that dimension in one line is multiple of 128. There are no residues.
 	int dim2 = dim*dim;
-
+	
+	
 	for (int i = -1; i < 2; i++)
     {
         for (int j = -1; j < 2; j++)
@@ -83,6 +84,7 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	
 	// neighbourhood computation
 	// TODO shuffling functions here
+	results[tx] = 0;
 	for (int i = 0; i < 3; i++)
 	{
 		for (int j = 0; j < 3; j++)
