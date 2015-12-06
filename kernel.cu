@@ -1,24 +1,39 @@
 // write your code into this file
 
-#define TILE_WIDTH 3
-#define TILE_LENGTH 32
+#define TILE_X 2
+#define TILE_Y 2
+#define TILE_Z 32
+#define PADDING 0
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim);
+__global__ void copy_to_bordered(int* in_array, int* out_array, int dim);
+__global__ void copy_to_raw(int* in_array, int* out_array, int dim);
 
 void solveGPU(int **dCells, int dim, int iters)
 {
-	dim3 threadsPerBlock(TILE_LENGTH, 1, 1);
+	dim3 threadsPerBlock(TILE_X, TILE_Y, TILE_Z);
 	dim3 numBlocks(dim/threadsPerBlock.x, dim/threadsPerBlock.y, dim/threadsPerBlock.z);
 	
+	int temp_array_size = (dim+2)*(dim+2)*(dim+2)*sizeof(int);
+	int* bordered_array;
 	int* result_array;
-	cudaMalloc((void**)&result_array, dim*dim*dim*sizeof(int));
+	cudaMalloc((void**)&bordered_array, temp_array_size);
+	cudaMalloc((void**)&result_array,   temp_array_size);
+	cudaMemset(bordered_array, 0, temp_array_size);
+	cudaMemset(result_array, 0, temp_array_size);
+ 
     int* tmp;
 	int* array_in;
 	int* array_out;
 
-    array_in = *dCells;
+	cudaFuncSetCacheConfig(copy_to_bordered, cudaFuncCachePreferL1);
+	copy_to_bordered<<<numBlocks, threadsPerBlock>>>(*dCells, bordered_array, dim);
+
+	array_in = bordered_array;
     array_out = (int*)result_array;
-	
+
+	cudaFuncSetCacheConfig(compute_cell, cudaFuncCachePreferShared);
+
 	for (int i = 0; i < iters; i++)
 	{
 		compute_cell<<<numBlocks, threadsPerBlock>>>(array_in, array_out, dim);
@@ -28,16 +43,38 @@ void solveGPU(int **dCells, int dim, int iters)
         array_out = tmp;
 	}
 
-    *dCells = result_array; // result array from loop above
-    cudaFree(array_out);
+		
+	cudaFuncSetCacheConfig(copy_to_raw, cudaFuncCachePreferL1);
+	copy_to_raw<<<numBlocks, threadsPerBlock>>>(*dCells, result_array, dim);
+
+	cudaFree(bordered_array);
+	cudaFree(result_array);
 }
 
+__global__ void copy_to_bordered(int* in_array, int* out_array, int dim)
+{
+	int dim2 = dim*dim;
+	int idx_x = blockIdx.x*blockDim.x + threadIdx.x;
+    int idx_y = blockIdx.y*blockDim.y + threadIdx.y;
+    int idx_z = blockIdx.z*blockDim.z + threadIdx.z;
+	
+	out_array[((idx_x+1)*dim2)+((idx_y+1)*dim)+idx_z+1] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z];
+}
+
+__global__ void copy_to_raw(int* in_array, int* out_array, int dim)
+{
+	int dim2 = dim*dim;
+	int idx_x = blockIdx.x*blockDim.x + threadIdx.x;
+    int idx_y = blockIdx.y*blockDim.y + threadIdx.y;
+    int idx_z = blockIdx.z*blockDim.z + threadIdx.z;
+	
+	out_array[(idx_x*dim2)+(idx_y*dim)+idx_z] = in_array[((idx_x+1)*dim2)+((idx_y+1)*dim)+idx_z+1];
+}
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim)
 {
 	// using subsegment of 3x3x32 (+2 bordering) cells from entire cube to use coalesced global mem access, i.e. 9 segments
-	__shared__ int cell_tile[TILE_LENGTH+2][TILE_WIDTH][TILE_WIDTH];
-	__shared__ int results[TILE_LENGTH];
+	__shared__ int tile[TILE_X+2][TILE_Y+2][TILE_Z+2+PADDING];
 	
 	int tx = threadIdx.x;
 
@@ -45,10 +82,9 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
     int idx_y = blockIdx.y*blockDim.y + threadIdx.y;
     int idx_z = blockIdx.z*blockDim.z + threadIdx.z;
 	
-	// It is guaranteed that dimension in one line is multiple of 128. There are no residues.
 	int dim2 = dim*dim;
 	
-	
+/*	
 	for (int i = -1; i < 2; i++)
     {
         for (int j = -1; j < 2; j++)
@@ -65,7 +101,7 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 
                 if ((b_min < 0) || (b_max >= dim))
                 {
-                    cell_tile[tx+1+i][j+1][k+1] = 0;
+                    tile[tx+1+i][j+1][k+1] = 0;
                 }
                 else
                 {
@@ -73,47 +109,48 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 					// and coalesced access is not used unlike the previous solution.
                     // However loading "caps" of the block is guaranteed.
                 
-                    cell_tile[tx+1+i][j+1][k+1] = in_array[(idx_x+i)+((idx_y+j)*dim)+((idx_z+k)*dim2)];
+                    tile[tx+1+i][j+1][k+1] = in_array[(idx_x+i)+((idx_y+j)*dim)+((idx_z+k)*dim2)];
                 }
             }
         }
     }
-	// work out tile bounds for cell_tile[0] and cell_tile[TILE_LENGTH]
+	*/
+	tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1] = 0;
+	tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z];
+	// work out tile bounds for tile[0] and tile[TILE_LENGTH]
 	__syncthreads();
 	
 	
 	// neighbourhood computation
-	// TODO shuffling functions here
-	results[tx] = 0;
+	int result = 0;
 	for (int i = 0; i < 3; i++)
 	{
 		for (int j = 0; j < 3; j++)
 		{
 			for (int k = 0; k < 3; k++)
 			{
-				results[tx] += cell_tile[tx+i][j][k];
+				result += tile[threadIdx.x+i][threadIdx.y+j][threadIdx.z+k];
 			}
 		}
 	}
-	results[tx] -= cell_tile[tx+1][1][1];
+	result -= tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1];
 	__syncthreads();
 	
 	
 	// cell life computation
-	if ((results[tx] < 4) || (results[tx] > 5))
+	if ((result < 4) || (result > 5))
 	{
-		results[tx] = 0;
+		result = 0;
 	}
-	else if (results[tx] == 5)
+	else if (result == 5)
 	{
-		results[tx] = 1;
+		result = 1;
 	}
 	else
 	{
-		results[tx] = cell_tile[tx+1][1][1];
+		result = tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1];
 	}
 	__syncthreads();
 	
-	// TODO redesign to avoid 32-way bank conflict
-	out_array[idx_x+(idx_y*dim)+(idx_z*dim2)] = results[tx];
+	out_array[(idx_x*dim2)+(idx_y*dim)+idx_z] = result;
 }
