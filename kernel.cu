@@ -56,11 +56,79 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 
 	
 	// loading non-diagonal boundary cells into shared
-/*	if (threadIdx.x == 0)
+	
+	// X-coords
+	if (threadIdx.x == 0)
 	{
-		
+		if (idx_x == 0)
+		{
+			tile[threadIdx.x][threadIdx.y+1][threadIdx.z+1] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x][threadIdx.y+1][threadIdx.z+1] = in_array[((idx_x-1)*dim2)+(idx_y*dim)+idx_z];
+		}
 	}
-	*/
+	if (threadIdx.x == (TILE_X-1))
+	{
+		if (idx_x == (dim-1))
+		{
+			tile[threadIdx.x+2][threadIdx.y+1][threadIdx.z+1] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x+2][threadIdx.y+1][threadIdx.z+1] = in_array[((idx_x+1)*dim2)+(idx_y*dim)+idx_z];
+		}
+	}
+	
+	// Y-coords
+	if (threadIdx.y == 0)
+	{
+		if (idx_y == 0)
+		{
+			tile[threadIdx.x+1][threadIdx.y][threadIdx.z+1] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x+1][threadIdx.y][threadIdx.z+1] = in_array[(idx_x*dim2)+((idx_y-1)*dim)+idx_z];
+		}
+	}
+	if (threadIdx.x == (TILE_Y-1))
+	{
+		if (idx_y == (dim-1))
+		{
+			tile[threadIdx.x+1][threadIdx.y+2][threadIdx.z+1] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x+1][threadIdx.y+2][threadIdx.z+1] = in_array[(idx_x*dim2)+((idx_y+1)*dim)+idx_z];
+		}
+	}
+	
+	// Z-coords
+	if (threadIdx.z == 0)
+	{
+		if (idx_z == 0)
+		{
+			tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x+1][threadIdx.y+2][threadIdx.z] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z-1];
+		}
+	}
+	if (threadIdx.x == (TILE_Z-1))
+	{
+		if (idx_z == (dim-1))
+		{
+			tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+2] = 0;
+		}
+		else
+		{
+			tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+2] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z+1];
+		}
+	}
+	
 	__syncthreads();
 	
 	
