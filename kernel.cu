@@ -1,9 +1,8 @@
 // write your code into this file
 
-#define TILE_X 2
-#define TILE_Y 2
+#define TILE_X 4
+#define TILE_Y 4
 #define TILE_Z 32
-#define PADDING 0
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim);
 __global__ void copy_to_bordered(int* in_array, int* out_array, int dim);
@@ -12,7 +11,9 @@ __global__ void copy_to_raw(int* in_array, int* out_array, int dim);
 void solveGPU(int **dCells, int dim, int iters)
 {
 	dim3 threadsPerBlock(TILE_X, TILE_Y, TILE_Z);
-	dim3 numBlocks(dim/threadsPerBlock.x, dim/threadsPerBlock.y, dim/threadsPerBlock.z);
+	dim3 numBlocks((int)ceil(dim/(float)(TILE_X-2)), (int)ceil(dim/(float)(TILE_Y-2)), (int)ceil(dim/(float)(TILE_Z-2)));
+	
+	dim3 copyBlocks(dim/TILE_X,dim/TILE_Y,dim/TILE_Z);
 	
 	int temp_array_size = (dim+2)*(dim+2)*(dim+2)*sizeof(int);
 	int* bordered_array;
@@ -27,13 +28,14 @@ void solveGPU(int **dCells, int dim, int iters)
 	int* array_out;
 
 	cudaFuncSetCacheConfig(copy_to_bordered, cudaFuncCachePreferL1);
-	copy_to_bordered<<<numBlocks, threadsPerBlock>>>(*dCells, bordered_array, dim);
+	copy_to_bordered<<<copyBlocks, threadsPerBlock>>>(*dCells, bordered_array, dim);
 
 	array_in = bordered_array;
     array_out = (int*)result_array;
 
 	cudaFuncSetCacheConfig(compute_cell, cudaFuncCachePreferShared);
 
+	
 	for (int i = 0; i < iters; i++)
 	{
 		compute_cell<<<numBlocks, threadsPerBlock>>>(array_in, array_out, dim);
@@ -45,7 +47,7 @@ void solveGPU(int **dCells, int dim, int iters)
 
 		
 	cudaFuncSetCacheConfig(copy_to_raw, cudaFuncCachePreferL1);
-	copy_to_raw<<<numBlocks, threadsPerBlock>>>(*dCells, result_array, dim);
+	copy_to_raw<<<copyBlocks, threadsPerBlock>>>(*dCells, result_array, dim);
 
 	cudaFree(bordered_array);
 	cudaFree(result_array);
@@ -73,55 +75,37 @@ __global__ void copy_to_raw(int* in_array, int* out_array, int dim)
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim)
 {
-	// using subsegment of 3x3x32 (+2 bordering) cells from entire cube to use coalesced global mem access, i.e. 9 segments
-	__shared__ int tile[TILE_X+2][TILE_Y+2][TILE_Z+2+PADDING];
-	
-	int tx = threadIdx.x;
+	__shared__ int tile[TILE_X][TILE_Y][TILE_Z];
 
-    int idx_x = blockIdx.x*blockDim.x + threadIdx.x;
-    int idx_y = blockIdx.y*blockDim.y + threadIdx.y;
-    int idx_z = blockIdx.z*blockDim.z + threadIdx.z;
+    int idx_x = blockIdx.x*(blockDim.x-2) + threadIdx.x;
+    int idx_y = blockIdx.y*(blockDim.y-2) + threadIdx.y;
+    int idx_z = blockIdx.z*(blockDim.z-2) + threadIdx.z;
+	
+    int border_idx_x = blockIdx.x*blockDim.x + threadIdx.x;
+    int border_idx_y = blockIdx.y*blockDim.y + threadIdx.y;
+    int border_idx_z = blockIdx.z*blockDim.z + threadIdx.z;
 	
 	int dim2 = dim*dim;
-	
-/*	
-	for (int i = -1; i < 2; i++)
-    {
-        for (int j = -1; j < 2; j++)
-        {
-            for (int k = -1; k < 2; k++)
-            {
-                int b_min = idx_x+i;
-                b_min = min(b_min, idx_y+j);
-                b_min = min(b_min, idx_z+k);
 
-                int b_max = idx_x+i;
-                b_max = max(b_max, idx_y+j);
-                b_max = max(b_max, idx_z+k);
+	// loading non-boundary cells into shared
+//	int is_border = 0;
+//	is_border += 0;
 
-                if ((b_min < 0) || (b_max >= dim))
-                {
-                    tile[tx+1+i][j+1][k+1] = 0;
-                }
-                else
-                {
-                    // Above all this is quite stupid, because a value is stored multiple times into shared
-					// and coalesced access is not used unlike the previous solution.
-                    // However loading "caps" of the block is guaranteed.
-                
-                    tile[tx+1+i][j+1][k+1] = in_array[(idx_x+i)+((idx_y+j)*dim)+((idx_z+k)*dim2)];
-                }
-            }
-        }
-    }
-	*/
-	tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1] = 0;
-	tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z];
-	// work out tile bounds for tile[0] and tile[TILE_LENGTH]
+	// loading tile to shared
+	tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
+	if ((border_idx_x < (dim+1)) && (border_idx_y < (dim+1)) && (border_idx_z < (dim-1)))
+	{
+		if (border_idx_x > 0 && border_idx_y > 0 && border_idx_z > 0)
+		{
+			tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z];
+		}
+	}
+
 	__syncthreads();
 	
 	
 	// neighbourhood computation
+	// TODO shuffling functions here
 	int result = 0;
 	for (int i = 0; i < 3; i++)
 	{
@@ -152,5 +136,6 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	}
 	__syncthreads();
 	
+	// TODO redesign to avoid 32-way bank conflict
 	out_array[(idx_x*dim2)+(idx_y*dim)+idx_z] = result;
 }
