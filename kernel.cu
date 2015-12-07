@@ -1,8 +1,8 @@
 // write your code into this file
 
-#define TILE_X 4
-#define TILE_Y 4
-#define TILE_Z 32
+#define TILE_X 32
+#define TILE_Y 5
+#define TILE_Z 5
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim);
 
@@ -39,50 +39,36 @@ void solveGPU(int **dCells, int dim, int iters)
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim)
 {
-	// using subsegment of 3x3x32 (+2 bordering) cells from entire cube to use coalesced global mem access, i.e. 9 segments
 	__shared__ int tile[TILE_X][TILE_Y][TILE_Z];
-	
-	//int tx = threadIdx.x;
 
     int mat_idx_x = blockIdx.x*(blockDim.x-2) + threadIdx.x-1;
     int mat_idx_y = blockIdx.y*(blockDim.y-2) + threadIdx.y-1;
     int mat_idx_z = blockIdx.z*(blockDim.z-2) + threadIdx.z-1;
-	/*
-    int border_idx_x = blockIdx.x*blockDim.x + threadIdx.x;
-    int border_idx_y = blockIdx.y*blockDim.y + threadIdx.y;
-    int border_idx_z = blockIdx.z*blockDim.z + threadIdx.z;
-	*/
+	
 	int dim2 = dim*dim;
 	
-	unsigned short thread_exceeds_matrix;
-	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim))
+	unsigned short thread_exceeds_matrix = 1;
+	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim) && (mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
 	{
-		if ((mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
-		{
-			thread_exceeds_matrix = 1;
-		}
+		thread_exceeds_matrix = 0;
+		tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[mat_idx_x+(mat_idx_y*dim)+(mat_idx_z*dim2)];
 	}
-	// loading tile to shared
-//	tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
-/*	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim))
-	{
-		if ((mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
-		{
-			tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z];
-		}
-	}
-	*/
-	tile[threadIdx.x][threadIdx.y][threadIdx.z] = thread_exceeds_matrix ? 0: in_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z];
+	else
+		tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
 	__syncthreads();
 	
 	
-	// neighbourhood computation
-	// TODO shuffling functions here
 	int result = 0;
 	int shared_value = tile[threadIdx.x][threadIdx.y][threadIdx.z];
 	
+	int is_hull = 1;
 	if (threadIdx.x > 0 && threadIdx.y > 0 && threadIdx.z > 0
 		&& threadIdx.x < (TILE_X-1) && threadIdx.y < (TILE_Y-1) && threadIdx.z < (TILE_Z-1) )
+	{
+		is_hull = 0;
+	}
+	
+	if (!is_hull)
 	{
 		for (int i = -1; i < 2; i++)
 		{
@@ -95,30 +81,46 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 			}
 		}
 		result -= shared_value;
-	}
-	__syncthreads();
-	
-
-	
-	// cell life computation
-	if ((result < 4) || (result > 5))
-	{
-		result = 0;
-	}
-	else if (result == 5)
-	{
-		result = 1;
-	}
-	else
-	{
-		// inspect this!!
-		result = shared_value;
+		
+		if ((result < 4) || (result > 5))
+		{
+			result = 0;
+		}
+		else if (result == 5)
+		{
+			result = 1;
+		}
+		else
+		{
+			// inspect this!!
+			result = shared_value;
+		}
 	}
 	__syncthreads();
 	
 	// TODO redesign to avoid 32-way bank conflict
-	if (!thread_exceeds_matrix)
+	if (!is_hull && !thread_exceeds_matrix)
 	{
-		out_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z] = result;
+		out_array[mat_idx_x+(mat_idx_y*dim)+(mat_idx_z*dim2)] = result;
 	}
+
+/*	__syncthreads();
+	if (mat_idx_x == 0  && mat_idx_y == 0 && mat_idx_z == 0)
+	{
+		
+	printf("gpu:\n");
+	
+	for (int i = 0; i<TILE_X;i++)
+		for (int j = 0; j<TILE_Y; j++)
+		{
+			for (int k = 0;k< TILE_Z; k++)
+				printf("%d ", tile[i][j][k]);
+		
+		printf("\n");
+		}	
+			
+	}
+*/
+	
+	// cell life computation
 }
