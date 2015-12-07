@@ -1,9 +1,8 @@
 // write your code into this file
 
-#define TILE_X 3
-#define TILE_Y 3
-#define TILE_Z 16
-#define PADDING 0
+#define TILE_X 4
+#define TILE_Y 4
+#define TILE_Z 32
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim);
 
@@ -45,50 +44,61 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	
 	//int tx = threadIdx.x;
 
-    int idx_x = blockIdx.x*(blockDim.x-2) + threadIdx.x;
-    int idx_y = blockIdx.y*(blockDim.y-2) + threadIdx.y;
-    int idx_z = blockIdx.z*(blockDim.z-2) + threadIdx.z;
-	
+    int mat_idx_x = blockIdx.x*(blockDim.x-2) + threadIdx.x-1;
+    int mat_idx_y = blockIdx.y*(blockDim.y-2) + threadIdx.y-1;
+    int mat_idx_z = blockIdx.z*(blockDim.z-2) + threadIdx.z-1;
+	/*
     int border_idx_x = blockIdx.x*blockDim.x + threadIdx.x;
     int border_idx_y = blockIdx.y*blockDim.y + threadIdx.y;
     int border_idx_z = blockIdx.z*blockDim.z + threadIdx.z;
-	
+	*/
 	int dim2 = dim*dim;
-
-	// loading non-boundary cells into shared
-//	int is_border = 0;
-//	is_border += 0;
-
-	// loading tile to shared
-	tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
-	if (idx_x < dim && idx_y < dim && idx_z < dim)
+	
+	unsigned short thread_exceeds_matrix;
+	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim))
 	{
-		if (border_idx_x > 0 && border_idx_y > 0 && border_idx_z > 0)
+		if ((mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
 		{
-			tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[(idx_x*dim2)+(idx_y*dim)+idx_z];
+			thread_exceeds_matrix = 1;
 		}
 	}
-
-	
+	// loading tile to shared
+//	tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
+/*	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim))
+	{
+		if ((mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
+		{
+			tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z];
+		}
+	}
+	*/
+	tile[threadIdx.x][threadIdx.y][threadIdx.z] = thread_exceeds_matrix ? 0: in_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z];
 	__syncthreads();
 	
 	
 	// neighbourhood computation
 	// TODO shuffling functions here
 	int result = 0;
-	for (int i = 0; i < 3; i++)
+	int shared_value = tile[threadIdx.x][threadIdx.y][threadIdx.z];
+	
+	if (threadIdx.x > 0 && threadIdx.y > 0 && threadIdx.z > 0
+		&& threadIdx.x < (TILE_X-1) && threadIdx.y < (TILE_Y-1) && threadIdx.z < (TILE_Z-1) )
 	{
-		for (int j = 0; j < 3; j++)
+		for (int i = -1; i < 2; i++)
 		{
-			for (int k = 0; k < 3; k++)
+			for (int j = -1; j < 2; j++)
 			{
-				result += tile[threadIdx.x+i][threadIdx.y+j][threadIdx.z+k];
+				for (int k = -1; k < 2; k++)
+				{
+					result += tile[threadIdx.x+i][threadIdx.y+j][threadIdx.z+k];
+				}
 			}
 		}
+		result -= shared_value;
 	}
-	result -= tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1];
 	__syncthreads();
 	
+
 	
 	// cell life computation
 	if ((result < 4) || (result > 5))
@@ -101,10 +111,14 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	}
 	else
 	{
-		result = tile[threadIdx.x+1][threadIdx.y+1][threadIdx.z+1];
+		// inspect this!!
+		result = shared_value;
 	}
 	__syncthreads();
 	
 	// TODO redesign to avoid 32-way bank conflict
-	out_array[(idx_x*dim2)+(idx_y*dim)+idx_z] = result;
+	if (!thread_exceeds_matrix)
+	{
+		out_array[(mat_idx_x*dim2)+(mat_idx_y*dim)+mat_idx_z] = result;
+	}
 }
