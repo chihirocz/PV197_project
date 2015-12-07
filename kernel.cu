@@ -1,8 +1,8 @@
 // write your code into this file
-
-#define TILE_X 32
-#define TILE_Y 5
-#define TILE_Z 5
+#define TILE_X 16
+#define TILE_Y 8
+#define TILE_Z 8
+#define PADDING 1
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim);
 
@@ -39,7 +39,7 @@ void solveGPU(int **dCells, int dim, int iters)
 
 __global__ void compute_cell(int* in_array, int* out_array, int dim)
 {
-	__shared__ int tile[TILE_X][TILE_Y][TILE_Z];
+	__shared__ int tile[TILE_Z][TILE_Y][TILE_X];
 
     int mat_idx_x = blockIdx.x*(blockDim.x-2) + threadIdx.x-1;
     int mat_idx_y = blockIdx.y*(blockDim.y-2) + threadIdx.y-1;
@@ -51,15 +51,15 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 	if ((mat_idx_x < dim) && (mat_idx_y < dim) && (mat_idx_z < dim) && (mat_idx_x >= 0) && (mat_idx_y >= 0) && (mat_idx_z >= 0))
 	{
 		thread_exceeds_matrix = 0;
-		tile[threadIdx.x][threadIdx.y][threadIdx.z] = in_array[mat_idx_x+(mat_idx_y*dim)+(mat_idx_z*dim2)];
+		tile[threadIdx.z][threadIdx.y][threadIdx.x] = in_array[mat_idx_x+(mat_idx_y*dim)+(mat_idx_z*dim2)];
 	}
 	else
-		tile[threadIdx.x][threadIdx.y][threadIdx.z] = 0;
+		tile[threadIdx.z][threadIdx.y][threadIdx.x] = 0;
 	__syncthreads();
 	
 	
 	int result = 0;
-	int shared_value = tile[threadIdx.x][threadIdx.y][threadIdx.z];
+	int shared_value = tile[threadIdx.z][threadIdx.y][threadIdx.x];
 	
 	int is_hull = 1;
 	if (threadIdx.x > 0 && threadIdx.y > 0 && threadIdx.z > 0
@@ -76,7 +76,7 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 			{
 				for (int k = -1; k < 2; k++)
 				{
-					result += tile[threadIdx.x+i][threadIdx.y+j][threadIdx.z+k];
+					result += tile[threadIdx.z+i][threadIdx.y+j][threadIdx.x+k];
 				}
 			}
 		}
@@ -92,13 +92,12 @@ __global__ void compute_cell(int* in_array, int* out_array, int dim)
 		}
 		else
 		{
-			// inspect this!!
 			result = shared_value;
 		}
 	}
 	__syncthreads();
 	
-	// TODO redesign to avoid 32-way bank conflict
+	// loading back to global
 	if (!is_hull && !thread_exceeds_matrix)
 	{
 		out_array[mat_idx_x+(mat_idx_y*dim)+(mat_idx_z*dim2)] = result;
